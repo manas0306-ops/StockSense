@@ -2,9 +2,11 @@
 
 > **Production-Grade, Modular Inventory ERP with Real-Time Analytics & Autonomous Inventory Intelligence**  
 > *Built for the Odoo Hackathon 2026*  
-> **GitHub Repository:** [https://github.com/manas0306-ops/StockSense](https://github.com/manas0306-ops/StockSense)
+> **GitHub Repository:** [https://github.com/manas0306-ops/StockSense](https://github.com/manas0306-ops/StockSense)  
+> 🌐 **24/7 Live Web Deployment:** [https://manas0306-ops.github.io/StockSense/](https://manas0306-ops.github.io/StockSense/)
 
 [![GitHub Repo](https://img.shields.io/badge/GitHub-manas0306--ops%2FStockSense-181717?logo=github)](https://github.com/manas0306-ops/StockSense)
+[![Live Demo](https://img.shields.io/badge/Live_Demo-Active_24%2F7-emerald?logo=github-pages)](https://manas0306-ops.github.io/StockSense/)
 [![Node.js](https://img.shields.io/badge/Node.js-v20%2B%20%7C%20v24-339933?logo=node.js)](https://nodejs.org)
 [![Express](https://img.shields.io/badge/Express-v4.21-000000?logo=express)](https://expressjs.com)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-v16%2B%20%7C%20v18-336791?logo=postgresql)](https://www.postgresql.org)
@@ -37,34 +39,34 @@ StockSense is a **production-style, database-backed enterprise inventory command
 
 ```mermaid
 flowchart TD
-    User([Warehouse Operator / Executive]) <-->|Search, Operations, Queries| ReactUI[React 18 + Vite + Tailwind Frontend]
-    ReactUI <-->|JWT Bearer + REST API| ExpressApp[Express REST Backend]
+    User(["Warehouse Operator / Executive"]) <-->|Search, Operations, Queries| ReactUI["React 18 + Vite + Tailwind Frontend"]
+    ReactUI <-->|JWT Bearer + REST API| ExpressApp["Express REST Backend"]
     
     subgraph FrontendIntelligence ["Frontend Client Engine"]
-        ReactUI <--> GlobalSearch[Global Command Palette (Ctrl+K)]
-        ReactUI <--> ProdModal[Product Intelligence Drawer]
-        ReactUI <--> AnalyticsEngine[Recharts BI Analytics Suite]
-        ReactUI <--> AICopilot[Ask StockSense Copilot]
-        ReactUI <--> ReportGen[PDF/CSV Report Generator]
-        ReactUI <--> DemoStore[Client Fallback Store (32 SKUs, 5 WHs)]
+        ReactUI <--> GlobalSearch["Global Command Palette (Ctrl + K)"]
+        ReactUI <--> ProdModal["Product Intelligence Drawer"]
+        ReactUI <--> AnalyticsEngine["Recharts BI Analytics Suite"]
+        ReactUI <--> AICopilot["Ask StockSense Copilot"]
+        ReactUI <--> ReportGen["PDF/CSV Report Generator"]
+        ReactUI <--> DemoStore["Client Fallback Store (32 SKUs, 5 WHs)"]
     end
 
     subgraph BackendCore ["Backend Core (Leader Layer)"]
-        ExpressApp <--> AuthRBAC[JWT Authentication & RBAC]
-        ExpressApp <--> OpsRouter[Operations Controllers]
-        ExpressApp <--> AnalyticsCtrl[Analytics & Velocity Engine]
-        ExpressApp <--> AlertCtrl[Autonomous Alert Evaluator]
-        ExpressApp <--> InvEngine[Centralized Inventory Engine]
+        ExpressApp <--> AuthRBAC["JWT Authentication & RBAC"]
+        ExpressApp <--> OpsRouter["Operations Controllers"]
+        ExpressApp <--> AnalyticsCtrl["Analytics & Velocity Engine"]
+        ExpressApp <--> AlertCtrl["Autonomous Alert Evaluator"]
+        ExpressApp <--> InvEngine["Centralized Inventory Engine"]
     end
 
     subgraph DatabaseEngine ["PostgreSQL 18 Persistence & Invariants"]
-        InvEngine -->|BEGIN Tx| TxBlock[ACID Transaction Block]
+        InvEngine -->|BEGIN Tx| TxBlock["ACID Transaction Block"]
         TxBlock -->|Pessimistic Lock| RowLock["SELECT quantity FROM stocks FOR UPDATE"]
-        RowLock -->|Zero-Negative Guard| InvariantCheck{Stock - Quantity >= 0?}
-        InvariantCheck -->|No| AbortRollback[ROLLBACK Tx with INSUFFICIENT_STOCK]
+        RowLock -->|Zero-Negative Guard| InvariantCheck{"Stock - Quantity >= 0?"}
+        InvariantCheck -->|No| AbortRollback["ROLLBACK Tx with INSUFFICIENT_STOCK"]
         InvariantCheck -->|Yes| UpdateStock["UPDATE stocks SET quantity = ..."]
         UpdateStock -->|Append Immutable Log| WriteLedger["INSERT INTO stock_ledger (...)"]
-        WriteLedger -->|COMMIT Tx| FinalizeTx[Operation Finalized]
+        WriteLedger -->|COMMIT Tx| FinalizeTx["Operation Finalized"]
     end
 ```
 

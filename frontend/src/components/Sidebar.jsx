@@ -17,7 +17,9 @@ import {
   User, 
   Boxes,
   X,
-  Sparkles
+  Sparkles,
+  Cpu,
+  ShieldCheck
 } from 'lucide-react';
 
 const operationsNav = [
@@ -33,6 +35,8 @@ const operationsNav = [
 const intelligenceNav = [
   { name: 'Warehouses', href: '/warehouses', icon: Warehouse },
   { name: 'Analytics & BI', href: '/analytics', icon: BarChart3 },
+  { name: 'What-If Simulator', href: '/simulator', icon: Cpu, badge: 'SIM' },
+  { name: 'Data Quality & Audit', href: '/quality', icon: ShieldCheck, badge: '98%' },
   { name: 'Alert Center', href: '/alerts', icon: AlertTriangle },
   { name: 'AI Assistant', href: '/assistant', icon: Bot, isAi: true },
   { name: 'Reports', href: '/reports', icon: FileText },

@@ -20,6 +20,10 @@ import Settings from './pages/Settings';
 import ForgotPassword from './pages/ForgotPassword';
 import Profile from './pages/Profile';
 
+import Simulator from './pages/Simulator';
+import DataQuality from './pages/DataQuality';
+import JudgeTour from './components/JudgeTour';
+
 function PublicRoute({ children }) {
   const { user, loading } = useAuth();
   if (loading) {
@@ -72,6 +76,8 @@ export default function App() {
             <Route path="/ledger" element={<StockLedger />} />
             <Route path="/warehouses" element={<Warehouses />} />
             <Route path="/analytics" element={<Analytics />} />
+            <Route path="/simulator" element={<Simulator />} />
+            <Route path="/quality" element={<DataQuality />} />
             <Route path="/alerts" element={<Alerts />} />
             <Route path="/assistant" element={<AiAssistant />} />
             <Route path="/reports" element={<Reports />} />
@@ -81,6 +87,7 @@ export default function App() {
 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        <JudgeTour />
       </BrowserRouter>
     </AuthProvider>
   );

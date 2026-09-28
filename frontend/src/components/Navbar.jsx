@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import GlobalSearch from './GlobalSearch';
+import ScannerModal from './ScannerModal';
+import CompareModal from './CompareModal';
 import { 
   LogOut, 
   ShieldCheck, 
@@ -14,7 +16,9 @@ import {
   CheckCircle2, 
   AlertTriangle, 
   Info,
-  X
+  X,
+  Scan,
+  ArrowLeftRight
 } from 'lucide-react';
 import { alertService } from '../services/alertService';
 
@@ -22,10 +26,26 @@ export default function Navbar({ onMenuToggle }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [searchOpen, setSearchOpen] = useState(false);
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [compareOpen, setCompareOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [alerts, setAlerts] = useState([]);
   const [resetting, setResetting] = useState(false);
   const [resetSuccess, setResetSuccess] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        setScannerOpen(prev => !prev);
+      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'c') {
+        e.preventDefault();
+        setCompareOpen(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   useEffect(() => {
     async function loadAlerts() {
@@ -98,6 +118,26 @@ export default function Navbar({ onMenuToggle }) {
             aria-label="Open search"
           >
             <Search className="h-5 w-5" />
+          </button>
+
+          {/* Scanner Action */}
+          <button
+            onClick={() => setScannerOpen(true)}
+            className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 border border-slate-200 transition-colors cursor-pointer"
+            title="Hardware Scanner Emulator (Ctrl+Shift+S)"
+          >
+            <Scan className="h-3.5 w-3.5 text-emerald-600" />
+            <span>Scan</span>
+          </button>
+
+          {/* Compare Action */}
+          <button
+            onClick={() => setCompareOpen(true)}
+            className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-purple-50 hover:text-purple-700 border border-slate-200 transition-colors cursor-pointer"
+            title="Dual Entity Compare Matrix (Ctrl+Shift+C)"
+          >
+            <ArrowLeftRight className="h-3.5 w-3.5 text-purple-600" />
+            <span>Compare</span>
           </button>
 
           {/* Demo Mode Badge & Quick Reset */}
@@ -222,6 +262,12 @@ export default function Navbar({ onMenuToggle }) {
 
       {/* Global Search Command Palette */}
       <GlobalSearch isOpen={searchOpen} onClose={() => setSearchOpen(false)} />
+
+      {/* Scanner Hardware Emulator Modal */}
+      <ScannerModal isOpen={scannerOpen} onClose={() => setScannerOpen(false)} />
+
+      {/* Dual Entity Comparison Modal */}
+      <CompareModal isOpen={compareOpen} onClose={() => setCompareOpen(false)} />
     </>
   );
 }

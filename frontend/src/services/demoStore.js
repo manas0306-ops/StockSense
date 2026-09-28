@@ -1298,6 +1298,584 @@ export function handleMockRequest(endpoint, options = {}) {
     return { success: true, data: list };
   }
 
+  // ADVANCED COMMAND CENTER: OPERATIONAL SUMMARY & WHY EXPLANATIONS
+  if (pathname === '/dashboard/operational-summary') {
+    const totalUnits = db.products.reduce((acc, p) => {
+      const pStock = (p.locations || []).reduce((sum, l) => sum + (parseFloat(l.quantity) || 0), 0);
+      return acc + pStock;
+    }, 0);
+
+    const totalValuation = db.products.reduce((acc, p) => {
+      const pStock = (p.locations || []).reduce((sum, l) => sum + (parseFloat(l.quantity) || 0), 0);
+      return acc + (pStock * (p.unit_cost || 0));
+    }, 0);
+
+    const lowStockItems = db.products.filter(p => {
+      const pStock = (p.locations || []).reduce((sum, l) => sum + (parseFloat(l.quantity) || 0), 0);
+      return pStock <= p.reorder_level;
+    });
+
+    const pendingRecs = (db.receipts || []).filter(r => r.status !== 'done');
+    const pendingDels = (db.deliveries || []).filter(d => d.status !== 'done');
+    const pendingTrfs = (db.transfers || []).filter(t => t.status !== 'done');
+    const criticalAlerts = (db.alerts || []).filter(a => a.severity === 'critical' && a.status !== 'resolved');
+
+    const totalCap = db.warehouses.reduce((acc, w) => acc + (w.capacity || 10000), 0);
+    const avgUtil = totalCap > 0 ? Math.round((totalUnits / totalCap) * 100) : 74;
+
+    const whyExplanations = {
+      lowStock: {
+        title: `${lowStockItems.length} Products Below Safety Threshold`,
+        summary: 'Inventory levels have breached safety reorder thresholds across 4 operational warehouses.',
+        breakdown: [
+          { reason: 'High Outbound Consumption Velocity', count: 3, description: 'Rapid customer fulfillment spikes in Fasteners and Raw Metals.' },
+          { reason: 'Supplier Shipment Delays', count: 2, description: 'Inbound PO lead-times extended by 4.2 days from Apex Sensors and ABC Steel.' },
+          { reason: 'Regional Stock Imbalance', count: 1, description: 'Surplus located in Texas while Dallas bulk reserve is depleted.' },
+          { reason: 'Abnormal Production Demand Surge', count: 1, description: 'Shift B assembly consumed 120% of estimated weekly buffer.' }
+        ],
+        affectedProducts: lowStockItems.map(p => {
+          const current = (p.locations || []).reduce((sum, l) => sum + (parseFloat(l.quantity) || 0), 0);
+          return {
+            id: p.id,
+            name: p.name,
+            sku: p.sku,
+            current,
+            reorderLevel: p.reorder_level,
+            deficit: p.reorder_level - current,
+            suggestedPO: Math.max(50, p.reorder_level * 2 - current),
+            primaryWarehouse: (p.locations && p.locations[0]?.warehouse_name) || 'Main Central Warehouse'
+          };
+        }),
+        quickActions: [
+          { label: 'Create Bulk Replenishment Receipt', path: '/receipts?autoOpen=true' },
+          { label: 'Initiate Inter-Warehouse Transfer', path: '/transfers?autoOpen=true' }
+        ]
+      },
+      health: {
+        score: 88,
+        status: 'Optimal (Grade A)',
+        components: [
+          { name: 'Stock Availability Score', score: '92 / 100', weight: '35%', notes: '94% of active catalog items in stock' },
+          { name: 'Inventory Turnover Velocity', score: '84 / 100', weight: '25%', notes: 'Annualized turnover rate at 6.2x' },
+          { name: 'Fulfillment SLA Compliance', score: '98 / 100', weight: '25%', notes: 'Orders delivered within target 2.4-day SLA' },
+          { name: 'Storage Capacity Balance', score: '78 / 100', weight: '15%', notes: 'Rotterdam hub underutilized (18%); Dallas high (82%)' }
+        ],
+        deductions: [
+          { label: 'Out of stock in Titanium Grade 5 Plate', penalty: '-6 pts' },
+          { label: 'East Coast terminal conveyor deficit', penalty: '-4 pts' },
+          { label: 'Warehouse utilization regional variance', penalty: '-2 pts' }
+        ]
+      },
+      warehouseUtilization: {
+        totalCapacity: totalCap,
+        totalStored: totalUnits,
+        averageUtilization: `${avgUtil}%`,
+        warehouses: db.warehouses.map(w => {
+          const occupied = w.total_units || 3000;
+          const cap = w.capacity || 10000;
+          const pct = Math.round((occupied / cap) * 100);
+          return {
+            id: w.id,
+            name: w.name,
+            city: w.city,
+            capacity: cap,
+            occupied,
+            utilization: pct,
+            status: pct >= 80 ? 'HIGH' : pct >= 50 ? 'OPTIMAL' : 'MODERATE'
+          };
+        })
+      }
+    };
+
+    return {
+      success: true,
+      data: {
+        inventoryHealth: 88,
+        criticalIssues: criticalAlerts.length,
+        lowStockCount: lowStockItems.length,
+        pendingReceipts: pendingRecs.length,
+        pendingDeliveries: pendingDels.length,
+        pendingTransfers: pendingTrfs.length,
+        warehouseUtilization: avgUtil,
+        totalStockUnits: totalUnits,
+        totalStockValue: totalValuation,
+        todayMovementVolume: 420,
+        whyExplanations
+      }
+    };
+  }
+
+  // INVENTORY REPLAY / TIME MACHINE
+  if (pathname === '/ledger/replay') {
+    const totalEvents = db.ledger.length;
+    let eventIndex = parseInt(searchParams.get('eventIndex'), 10);
+    if (isNaN(eventIndex) || eventIndex < 0) eventIndex = 0;
+    if (eventIndex >= totalEvents) eventIndex = totalEvents - 1;
+
+    // Chronological order: reverse from oldest to selected event
+    const chronologicalLedger = [...db.ledger].reverse();
+    const currentEvent = chronologicalLedger[eventIndex] || chronologicalLedger[0];
+
+    // Compute stock delta at this event
+    const productDeltas = {};
+    for (let i = 0; i <= eventIndex; i++) {
+      const entry = chronologicalLedger[i];
+      if (!productDeltas[entry.product_id]) {
+        productDeltas[entry.product_id] = 0;
+      }
+      if (entry.operation_type === 'RECEIPT') {
+        productDeltas[entry.product_id] += entry.quantity;
+      } else if (entry.operation_type === 'DELIVERY') {
+        productDeltas[entry.product_id] -= entry.quantity;
+      } else if (entry.operation_type === 'ADJUSTMENT') {
+        productDeltas[entry.product_id] = entry.new_stock;
+      }
+    }
+
+    const replayProducts = db.products.map(p => {
+      const baseStock = (p.locations || []).reduce((sum, l) => sum + (parseFloat(l.quantity) || 0), 0);
+      const replayStock = Math.max(0, (productDeltas[p.id] !== undefined) ? productDeltas[p.id] : baseStock);
+      return {
+        id: p.id,
+        name: p.name,
+        sku: p.sku,
+        category: p.category_name,
+        stock: replayStock,
+        unitCost: p.unit_cost,
+        value: replayStock * p.unit_cost
+      };
+    });
+
+    const totalReplayUnits = replayProducts.reduce((sum, p) => sum + p.stock, 0);
+    const totalReplayValue = replayProducts.reduce((sum, p) => sum + p.value, 0);
+
+    return {
+      success: true,
+      data: {
+        eventIndex,
+        totalEvents,
+        currentEvent,
+        timestamp: currentEvent?.timestamp || new Date().toISOString(),
+        totalUnits: totalReplayUnits,
+        totalValuation: totalReplayValue,
+        replayProducts: replayProducts.slice(0, 10),
+        activeMovementsCount: eventIndex + 1
+      }
+    };
+  }
+
+  // WHAT HAPPENED? INVENTORY EXPLORER
+  if (pathname === '/explorer/events') {
+    const range = searchParams.get('range') || '30D';
+    const type = searchParams.get('type') || 'ALL';
+
+    const events = [];
+
+    // Receipts
+    (db.receipts || []).forEach(r => {
+      events.push({
+        id: `REC-${r.id}`,
+        type: 'RECEIPT',
+        badge: '+IN',
+        color: 'emerald',
+        title: `Inbound Receipt ${r.reference_no}`,
+        description: `Received goods from ${r.supplier_name} at ${r.destination_location_name}`,
+        warehouse: r.warehouse_name,
+        timestamp: r.created_at,
+        quantity: (r.items || []).reduce((acc, i) => acc + (parseFloat(i.quantity) || 0), 0),
+        items: r.items,
+        user: r.created_by_name,
+        path: `/receipts?search=${r.reference_no}`
+      });
+    });
+
+    // Deliveries
+    (db.deliveries || []).forEach(d => {
+      events.push({
+        id: `DEL-${d.id}`,
+        type: 'DELIVERY',
+        badge: '-OUT',
+        color: 'blue',
+        title: `Customer Delivery ${d.reference_no}`,
+        description: `Dispatched items to ${d.customer_name} from ${d.source_location_name}`,
+        warehouse: d.warehouse_name,
+        timestamp: d.created_at,
+        quantity: (d.items || []).reduce((acc, i) => acc + (parseFloat(i.quantity) || 0), 0),
+        items: d.items,
+        user: d.created_by_name,
+        path: `/deliveries?search=${d.reference_no}`
+      });
+    });
+
+    // Transfers
+    (db.transfers || []).forEach(t => {
+      events.push({
+        id: `TRF-${t.id}`,
+        type: 'TRANSFER',
+        badge: 'REBALANCE',
+        color: 'purple',
+        title: `Internal Transfer ${t.reference_no}`,
+        description: `Shifted inventory from ${t.source_location_name} to ${t.destination_location_name}`,
+        warehouse: 'Multi-Location',
+        timestamp: t.created_at,
+        quantity: (t.items || []).reduce((acc, i) => acc + (parseFloat(i.quantity) || 0), 0),
+        items: t.items,
+        user: t.created_by_name,
+        path: `/transfers?search=${t.reference_no}`
+      });
+    });
+
+    // Adjustments
+    (db.adjustments || []).forEach(a => {
+      events.push({
+        id: `ADJ-${a.id}`,
+        type: 'ADJUSTMENT',
+        badge: a.difference < 0 ? 'WRITE-OFF' : 'SURPLUS',
+        color: a.difference < 0 ? 'rose' : 'amber',
+        title: `Count Reconciliation ${a.reference_no}`,
+        description: `Reconciled ${a.product_name} at ${a.location_name} (${a.difference > 0 ? '+' : ''}${a.difference} units): ${a.reason}`,
+        warehouse: a.location_name,
+        timestamp: a.created_at,
+        quantity: Math.abs(a.difference),
+        user: a.created_by_name,
+        path: `/adjustments?search=${a.reference_no}`
+      });
+    });
+
+    // Alerts
+    (db.alerts || []).forEach(a => {
+      events.push({
+        id: `ALT-${a.id}`,
+        type: 'ALERT',
+        badge: a.severity.toUpperCase(),
+        color: a.severity === 'critical' ? 'red' : 'amber',
+        title: a.title,
+        description: a.message,
+        warehouse: a.warehouse_name || 'System',
+        timestamp: a.created_at,
+        user: 'Autonomous Health Monitor',
+        path: '/alerts'
+      });
+    });
+
+    events.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+    let filtered = events;
+    if (type !== 'ALL') {
+      filtered = filtered.filter(e => e.type === type);
+    }
+
+    return {
+      success: true,
+      data: {
+        totalEvents: filtered.length,
+        events: filtered.slice(0, 30)
+      }
+    };
+  }
+
+  // WAREHOUSES DIGITAL TWIN & FLOW VISUALIZATION
+  if (pathname === '/warehouses/digital-twin') {
+    const digitalTwins = db.warehouses.map(w => {
+      const wLocs = db.locations.filter(l => l.warehouse_id === w.id);
+      const wProducts = db.products.filter(p => 
+        (p.locations || []).some(pl => wLocs.some(wl => wl.id === pl.location_id))
+      );
+
+      const racks = [
+        {
+          id: `RACK-${w.id}-A`,
+          name: 'Rack A (High-Bay Industrial)',
+          zone: 'Zone 1 - Bulk Storage',
+          occupancy: Math.min(95, Math.round(((w.total_units || 3000) * 0.42 / ((w.capacity || 10000) * 0.4)) * 100)),
+          capacity: Math.round((w.capacity || 10000) * 0.4),
+          storedUnits: Math.round((w.total_units || 3000) * 0.42),
+          skus: wProducts.slice(0, 4).map(p => ({ sku: p.sku, name: p.name, units: 150 }))
+        },
+        {
+          id: `RACK-${w.id}-B`,
+          name: 'Rack B (Assembly & Buffer)',
+          zone: 'Zone 2 - Production Prep',
+          occupancy: Math.min(88, Math.round(((w.total_units || 3000) * 0.35 / ((w.capacity || 10000) * 0.35)) * 100)),
+          capacity: Math.round((w.capacity || 10000) * 0.35),
+          storedUnits: Math.round((w.total_units || 3000) * 0.35),
+          skus: wProducts.slice(3, 7).map(p => ({ sku: p.sku, name: p.name, units: 95 }))
+        },
+        {
+          id: `RACK-${w.id}-C`,
+          name: 'Rack C (Rapid Pick & Dispatch)',
+          zone: 'Zone 3 - Outbound Staging',
+          occupancy: Math.min(75, Math.round(((w.total_units || 3000) * 0.23 / ((w.capacity || 10000) * 0.25)) * 100)),
+          capacity: Math.round((w.capacity || 10000) * 0.25),
+          storedUnits: Math.round((w.total_units || 3000) * 0.23),
+          skus: wProducts.slice(6, 10).map(p => ({ sku: p.sku, name: p.name, units: 45 }))
+        }
+      ];
+
+      return {
+        id: w.id,
+        name: w.name,
+        city: w.city,
+        capacity: w.capacity || 10000,
+        totalUnits: w.total_units || 3000,
+        utilizationPct: Math.round(((w.total_units || 3000) / (w.capacity || 10000)) * 100),
+        racks
+      };
+    });
+
+    const flowPipeline = {
+      nodes: [
+        { id: 'supp-1', name: 'ABC Steel & Apex', type: 'SUPPLIER', volume: '1,850 units' },
+        { id: 'supp-2', name: 'Global Fasteners', type: 'SUPPLIER', volume: '2,400 units' },
+        { id: 'proc-1', name: 'Inbound Dock Receiving', type: 'RECEIPT', volume: '4,250 units' },
+        { id: 'wh-dal', name: 'Dallas Central (WH-01)', type: 'WAREHOUSE', volume: '5,420 units' },
+        { id: 'wh-oak', name: 'West Coast Hub (WH-02)', type: 'WAREHOUSE', volume: '3,240 units' },
+        { id: 'wh-new', name: 'East Coast Hub (WH-03)', type: 'WAREHOUSE', volume: '2,450 units' },
+        { id: 'bay-trf', name: 'Inter-Bay Transfers', type: 'TRANSFER', volume: '850 units' },
+        { id: 'stage-out', name: 'Dispatch Staging', type: 'OUTBOUND', volume: '3,800 units' },
+        { id: 'cust-1', name: 'XYZ Systems & Metro', type: 'CUSTOMER', volume: '2,100 units' },
+        { id: 'cust-2', name: 'Prime Infrastructure', type: 'CUSTOMER', volume: '1,700 units' }
+      ],
+      links: [
+        { source: 'ABC Steel & Apex', target: 'Inbound Dock Receiving', value: 1850 },
+        { source: 'Global Fasteners', target: 'Inbound Dock Receiving', value: 2400 },
+        { source: 'Inbound Dock Receiving', target: 'Dallas Central (WH-01)', value: 2600 },
+        { source: 'Inbound Dock Receiving', target: 'West Coast Hub (WH-02)', value: 1650 },
+        { source: 'Dallas Central (WH-01)', target: 'Inter-Bay Transfers', value: 850 },
+        { source: 'Inter-Bay Transfers', target: 'East Coast Hub (WH-03)', value: 850 },
+        { source: 'West Coast Hub (WH-02)', target: 'Dispatch Staging', value: 2000 },
+        { source: 'Dallas Central (WH-01)', target: 'Dispatch Staging', value: 1800 },
+        { source: 'Dispatch Staging', target: 'XYZ Systems & Metro', value: 2100 },
+        { source: 'Dispatch Staging', target: 'Prime Infrastructure', value: 1700 }
+      ]
+    };
+
+    return {
+      success: true,
+      data: {
+        warehouses: digitalTwins,
+        flowPipeline
+      }
+    };
+  }
+
+  // ADVANCED ANALYTICS: ABC/XYZ, AGING, DEMAND PATTERNS, FINANCIALS & CYCLE COUNTING
+  if (pathname === '/analytics/advanced') {
+    // 1. ABC + XYZ matrix calculation
+    const productsWithValue = db.products.map(p => {
+      const stock = (p.locations || []).reduce((acc, loc) => acc + (parseFloat(loc.quantity) || 0), 0);
+      const totalVal = stock * (p.unit_cost || 0);
+      return { ...p, stock, totalVal };
+    }).sort((a, b) => b.totalVal - a.totalVal);
+
+    const catalogTotalVal = productsWithValue.reduce((acc, p) => acc + p.totalVal, 0) || 1;
+    let runningVal = 0;
+
+    const classified = productsWithValue.map((p, idx) => {
+      runningVal += p.totalVal;
+      const share = runningVal / catalogTotalVal;
+      let abc = 'C';
+      if (share <= 0.70) abc = 'A';
+      else if (share <= 0.90) abc = 'B';
+
+      // XYZ variability assignment based on index modulus
+      const xyz = (idx % 3 === 0) ? 'X' : (idx % 3 === 1) ? 'Y' : 'Z';
+      return {
+        id: p.id,
+        name: p.name,
+        sku: p.sku,
+        category: p.category_name,
+        stock: p.stock,
+        unitCost: p.unit_cost,
+        valuation: p.totalVal,
+        matrixClass: `${abc}${xyz}`,
+        abc,
+        xyz
+      };
+    });
+
+    const matrixGrid = {
+      AX: classified.filter(p => p.matrixClass === 'AX'),
+      AY: classified.filter(p => p.matrixClass === 'AY'),
+      AZ: classified.filter(p => p.matrixClass === 'AZ'),
+      BX: classified.filter(p => p.matrixClass === 'BX'),
+      BY: classified.filter(p => p.matrixClass === 'BY'),
+      BZ: classified.filter(p => p.matrixClass === 'BZ'),
+      CX: classified.filter(p => p.matrixClass === 'CX'),
+      CY: classified.filter(p => p.matrixClass === 'CY'),
+      CZ: classified.filter(p => p.matrixClass === 'CZ'),
+    };
+
+    // 2. Stock Aging Buckets
+    const agingBuckets = [
+      { bucket: '0–30 Days', range: 'Active Turn', count: 18, value: 345000, percentage: 62 },
+      { bucket: '31–60 Days', range: 'Moderate Flow', count: 7, value: 112000, percentage: 20 },
+      { bucket: '61–90 Days', range: 'Slow Moving', count: 4, value: 58000, percentage: 11 },
+      { bucket: '91–180 Days', range: 'Excess Stock', count: 2, value: 24000, percentage: 4 },
+      { bucket: '180+ Days', range: 'Dead Stock Risk', count: 1, value: 13000, percentage: 3 }
+    ];
+
+    // 3. Financial Intelligence: Capital Locked
+    const financialIntelligence = {
+      totalValuation: catalogTotalVal,
+      capitalInSlowMoving: 58000,
+      capitalInDeadStock: 13000,
+      capitalInExcess: 24000,
+      annualTurnoverRate: '6.2x',
+      daysSalesOfInventory: '48.2 days',
+      carryingCostEstimate: Math.round(catalogTotalVal * 0.18)
+    };
+
+    // 4. Cycle Counting Recommendations
+    const cycleCountRecommendations = [
+      {
+        id: 1,
+        productId: 1,
+        name: 'Cold Rolled Steel Sheets 2mm',
+        sku: 'STL-001',
+        location: 'Main Store Bulk Bay',
+        warehouse: 'Main Central Warehouse',
+        systemStock: 45,
+        priority: 'CRITICAL',
+        reason: 'High outbound volume + previous discrepancy history in bay 1'
+      },
+      {
+        id: 2,
+        productId: 2,
+        name: 'High Conductivity Copper Rods 10mm',
+        sku: 'CPR-002',
+        location: 'Main Store Bulk Bay',
+        warehouse: 'Main Central Warehouse',
+        systemStock: 15,
+        priority: 'HIGH',
+        reason: 'Class A asset ($28/kg) with critical buffer threshold breach'
+      },
+      {
+        id: 3,
+        productId: 20,
+        name: 'Lithium Battery Pack 48V 100Ah',
+        sku: 'BAT-206',
+        location: 'Cold Chain / Refrigerated Unit',
+        warehouse: 'Great Lakes Logistics Center',
+        systemStock: 7,
+        priority: 'MEDIUM',
+        reason: 'Hazardous materials compliance cycle count'
+      }
+    ];
+
+    // 5. Supplier Intelligence
+    const supplierPerformance = db.suppliers.map((s, idx) => ({
+      id: s.id,
+      name: s.name,
+      contact: s.contact,
+      onTimeDeliveryRate: `${92 + (idx * 2)}%`,
+      averageLeadTime: `${3.2 + (idx * 0.8)} days`,
+      quantityAccuracy: `${98.5 + (idx * 0.3)}%`,
+      openReceipts: idx === 0 ? 2 : idx === 1 ? 1 : 0,
+      riskLevel: idx === 1 ? 'MODERATE' : 'LOW'
+    }));
+
+    return {
+      success: true,
+      data: {
+        matrixGrid,
+        agingBuckets,
+        financialIntelligence,
+        cycleCountRecommendations,
+        supplierPerformance
+      }
+    };
+  }
+
+  // WHAT-IF INVENTORY SIMULATOR (COMPLETELY SANDBOXED)
+  if (pathname === '/simulator/run' && method === 'POST') {
+    const demandDelta = parseFloat(body.demandDelta || 0); // e.g. +25%
+    const supplierDelayDays = parseInt(body.supplierDelayDays || 0, 10); // e.g. 7 days
+    const transferQty = parseFloat(body.transferQty || 0);
+    const capacityMultiplier = parseFloat(body.capacityMultiplier || 1.0);
+    const deliveryMultiplier = parseFloat(body.deliveryMultiplier || 1.0);
+
+    const baseUnits = db.products.reduce((acc, p) => {
+      const pStock = (p.locations || []).reduce((sum, l) => sum + (parseFloat(l.quantity) || 0), 0);
+      return acc + pStock;
+    }, 0);
+
+    const baseValue = db.products.reduce((acc, p) => {
+      const pStock = (p.locations || []).reduce((sum, l) => sum + (parseFloat(l.quantity) || 0), 0);
+      return acc + (pStock * p.unit_cost);
+    }, 0);
+
+    // Simulated impact
+    const burnRateFactor = 1 + (demandDelta / 100) * deliveryMultiplier;
+    const simUnits = Math.round(Math.max(1000, baseUnits - (baseUnits * 0.08 * (burnRateFactor - 1))));
+    const simValue = Math.round(simUnits * (baseValue / baseUnits));
+
+    // Simulated risk items
+    let simRiskCount = 4;
+    if (demandDelta >= 25 || supplierDelayDays >= 7) simRiskCount = 9;
+    if (demandDelta >= 50 || supplierDelayDays >= 14) simRiskCount = 16;
+
+    const baseCapacity = db.warehouses.reduce((acc, w) => acc + (w.capacity || 10000), 0);
+    const simCapacity = Math.round(baseCapacity * capacityMultiplier);
+    const simUtil = Math.round((simUnits / simCapacity) * 100);
+
+    return {
+      success: true,
+      data: {
+        parameters: { demandDelta, supplierDelayDays, transferQty, capacityMultiplier, deliveryMultiplier },
+        current: {
+          stockUnits: baseUnits,
+          valuation: baseValue,
+          riskSKUs: 4,
+          capacityUtilization: 76,
+          stockoutIncidenceRate: '1.2%'
+        },
+        simulated: {
+          stockUnits: simUnits,
+          valuation: simValue,
+          riskSKUs: simRiskCount,
+          capacityUtilization: simUtil,
+          stockoutIncidenceRate: `${(1.2 * burnRateFactor + (supplierDelayDays * 0.4)).toFixed(1)}%`
+        },
+        delta: {
+          stockUnits: simUnits - baseUnits,
+          valuation: simValue - baseValue,
+          riskSKUs: simRiskCount - 4,
+          capacityUtilization: simUtil - 76
+        },
+        narrative: `Simulating a **${demandDelta > 0 ? '+' : ''}${demandDelta}% demand shift** and **${supplierDelayDays}-day supplier lead delay** increases stockout exposure to **${simRiskCount} SKUs**. Reorder points should be raised by **+${Math.round(demandDelta * 1.4)}%** to prevent stockouts.`
+      }
+    };
+  }
+
+  // DATA QUALITY AUDIT
+  if (pathname === '/quality/audit') {
+    const checks = [
+      { id: 1, name: 'Missing SKU Identifier', status: 'PASSED', count: 0, severity: 'CRITICAL', description: 'All 32 products have valid standard SKU identifiers.' },
+      { id: 2, name: 'Unassigned Product Categories', status: 'PASSED', count: 0, severity: 'HIGH', description: 'Every catalog item is mapped to one of 5 valid categories.' },
+      { id: 3, name: 'Negative Inventory Balance Violations', status: 'PASSED', count: 0, severity: 'CRITICAL', description: 'Zero negative stock instances found across all 12 bays.' },
+      { id: 4, name: 'Warehouse Location Assignment Integrity', status: 'PASSED', count: 0, severity: 'HIGH', description: 'All locations have valid active parent warehouse links.' },
+      { id: 5, name: 'Duplicate SKU or Barcode Verification', status: 'PASSED', count: 0, severity: 'MEDIUM', description: 'Unique constraints verified across product directory.' },
+      { id: 6, name: 'Supplier Contact Record Completeness', status: 'PASSED', count: 0, severity: 'MEDIUM', description: 'All registered suppliers have valid email and telephone contacts.' },
+      { id: 7, name: 'Suspicious Inventory Adjustment Variances', status: 'FLAGGED', count: 1, severity: 'LOW', description: 'ADJ-2026-0042 (-3 kg in Cold Rolled Steel Sheets) exceeded $40 threshold.' },
+      { id: 8, name: 'Orphaned Operations or Ledger Movements', status: 'PASSED', count: 0, severity: 'HIGH', description: 'All ledger audit records resolve to valid product and location references.' }
+    ];
+
+    const passed = checks.filter(c => c.status === 'PASSED').length;
+    const score = Math.round((passed / checks.length) * 100);
+
+    return {
+      success: true,
+      data: {
+        healthScore: score,
+        passedChecks: passed,
+        totalChecks: checks.length,
+        checks,
+        auditTimestamp: new Date().toISOString()
+      }
+    };
+  }
+
   // META / CATEGORIES / SUPPLIERS / CUSTOMERS
   if (pathname === '/categories') return { success: true, data: db.categories };
   if (pathname === '/suppliers') return { success: true, data: db.suppliers };
